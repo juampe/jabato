@@ -1,0 +1,33 @@
+#!/usr/bin/perl
+my($cmd)=@ARGV;
+
+if(not defined $ENV{JABATO_HOME}){
+        $home=".";
+}else{
+        $home=$ENV{JABATO_HOME};
+}
+
+if($cmd=~/^start/){
+	exec "$home/collector";
+}elsif($cmd=~/^stop/){
+	`cat $home/collector.pid|xargs kill -TERM`;
+}elsif($cmd=~/^restart/){
+	`cat $home/collector.pid|xargs kill -HUP`;
+}elsif($cmd=~/^status/){
+	`cat $home/collector.pid|xargs kill -USR1`;
+	sleep 1;
+	print `cat $home/collector.status`;
+}elsif($cmd=~/configtest/){
+}else{
+print <<"EOF";
+usage: $0 (start|stop|restart|fullstatus|status|graceful|configtest|help)
+
+start      - start httpd
+stop       - stop httpd
+restart    - restart httpd if running by sending a SIGHUP or start if
+             not running
+status     - dump a short status screen
+configtest - do a configuration syntax test
+help       - this screen
+EOF
+}

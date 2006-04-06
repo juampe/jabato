@@ -1,0 +1,47 @@
+#!/usr/bin/perl
+use POSIX qw(strftime);
+
+$dirname="/opt/jabato";
+$dbname="jabato";
+$dbhost="localhost";
+$dbport="3306";
+$dbuser="jabato";
+$dbpasswd=""
+
+print "Setup Utility \n";
+print "풵here jabato is installed($dirname)? : ";
+$dbname=<STDIN>;
+print "풵hich is dhe name of the database mysql($dbname)? : ";
+$dbname=<STDIN>;
+print "풵here the database mysql is hosted($dbhost)? : ";
+$dbhost=<STDIN>;
+print "풵hich is the port of the database mysql($dbport)? : ";
+$dbport=<STDIN>;
+print "풵hich is the user of the databse mysql($dbuser)? : ";
+$dbuser=<STDIN>;
+print "풵hich is the passwordof the databse mysql(xxxxxxx)? : ";
+$dbpasswd=<STDIN>;
+
+print "풡ebug information [0|1]? : ";
+$debug=<STDIN>;
+
+chomp $dbname;
+chomp $dbhost;
+chomp $dbport;
+chomp $dbuser;
+chomp $dbpasswd;
+chomp $debug;
+
+$conf_file="$dirname/jabato.conf";
+
+my $date = strftime("%Y-%m-%d %H:%M:%S",localtime);
+$hostname=`hostname`;
+chomp $hostname;
+$sysinfo=`uname -s`;
+chomp $sysinfo;
+$sysinfo.="-".`uname -m`;
+chomp $sysinfo;
+open(REG,">$conf_file") or die("No se puede crear $conf_file");
+print REG "\$date=\"$date\";\n\$host=\"$hostname\";\n\$sysinfo=\"$sysinfo\";\n\$db=\"$dbname\";\n\$dbhost=\"$dbhost\";\n\$dbport=\"$dbport\";\n\$dbuser=\"$dbuser\";\n\$dbpasswd=\"$dbpasswd\";\n\$debug=\"$debug\";";
+close REG;
+chmod 0600,$conf_file;

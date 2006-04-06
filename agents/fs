@@ -1,0 +1,23 @@
+#!/usr/bin/perl
+#Juan Pedro Paredes <juampe@iquis.com>
+
+my $max=94;
+foreach $host(split(/,/,$param{hosts})){
+	@dfs=rcmd($host,"df -kl") or next;
+	foreach $df(@dfs){
+		chomp $df;
+		$df=~s/%//g;
+		if($df!~/^File/){
+			#Filesystem 1K-blocks Used Available Use Mounted
+			($fs,$blq,$used,$avail,$pct,$mount)=split(/[ \t]+/,$df);
+			if($pct>$max){
+				if($static{"$host$mount"}++<100){$sev=2;}else{$sev=3;}
+				if($pct>97){$sev=1;}
+				$oparam.="!$host$mount=$pct:$host:$sev:-1:/system/fs:$mount at $pct%&";
+			}else{
+				$oparam.="$host$mount=$pct&";
+			}
+		}
+	}
+}
+$oparam=~s/&$//g;

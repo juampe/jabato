@@ -1,0 +1,16 @@
+#!/usr/bin/perl
+#Juan Pedro Paredes <juampe@iquis.com>
+
+foreach $host(split(/,/,$param{hosts})){
+	$ip=inet_ntoa((gethostbyname($host))[4]);
+	if(ping($host)){
+		if($static{$host}>0){
+			$static{$host}=0;
+			$oparam.="!$host=$static{$host}:$host:4:-1:/net/ping:$ip is up&";
+		}
+	}else{
+		if($static{"$host$mount"}++<10){$sev=1;}else{$sev=3;}
+		$oparam.="!$host=$static{$host}:$host:$sev:-1:/net/ping:$ip is down&";
+	}
+}
+$oparam=~s/&$//g;

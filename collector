@@ -1,0 +1,422 @@
+#!/usr/bin/perl
+#Juan Pedro Paredes <juampe@iquis.com>
+#Pull data with ditcron a sitecheck
+use RRDs;
+use DBI;
+use Net::SNMP;
+use Time::HiRes qw(usleep);
+use IPC::SysV qw(IPC_PRIVATE S_IRWXU IPC_CREAT IPC_NOWAIT SEM_UNDO);
+use IPC::Semaphore;
+use XML::Simple;
+
+require "flush.pl";
+
+#Debug
+$debug=1;
+
+print "$0\n";
+#Daemon mode - detach
+$daemon=1;
+if($daemon){
+	$SIG{HUP}=sub{};
+	$SIG{CHLD}='IGNORE';
+	my $pid=fork;
+	if($pid<0){
+	        print STDERR "${program}: can not detach $!\n";
+	        exit -1;
+	}elsif($pid){
+	        exit 0;
+	}
+}
+
+#Signal handling HUP,SIGUSR1,TERM,KILL,ABRT,INT
+$SIG{HUP}='initialize';
+$SIG{USR1}='status';
+$SIG{TERM}='done';
+$SIG{KILL}='done';
+$SIG{ABRT}='done';
+$SIG{INT}='done';
+#Anti-Zombies handling
+#$SIG{CHLD}=sub{wait};
+#$SIG{CHLD} = sub { while( waitpid(-1,WNOHANG)>0 ) {} };
+#$SIG{CHLD}=sub{while(waitpid(-1,WNOHANG)>0){}};
+$SIG{CHLD}='IGNORE';
+  
+
+#E/S standard handling for logger
+#$logger="logger -p daemon.info -t collector";
+#open(STDOUT,"| $logger");
+#open(STDERR,"| $logger");
+#open(STDIN,"</dev/null");
+
+#Get enviroment configuration
+if(not defined $ENV{JABATO_HOME}){
+        $home=".";
+}else{
+        $home=$ENV{JABATO_HOME};
+}
+
+#Change Dir
+chdir "$home";
+#Get configuracion from file
+$regfile="$home/jabato.conf";
+do "$regfile" or do "./jabato.conf" or die "No existe $regfile\n";
+
+#Get mib for oid aliasing
+do "$home/mib.str"; #$mib
+
+#Renice
+setpriority(0,$$,20);
+#Already running
+if(-e "$home/collector.pid"){
+	print "collector aready running or collector.pid not removed... exiting\n";
+	exit 1;
+}
+#PID
+system("echo \"$$\">$home/collector.pid");
+
+#open database
+$dbh=DBI->connect("DBI:mysql:database=$dbname;host=$dbhost;port=$dbport","$dbuser","$dbpasswd") or die("No se puede enlazar con la base de datos");
+
+#Structures to support ditcron and sitecheck
+my @cmds;
+my @steps;
+my @rnds;
+my @stamps;
+my @rounds;
+my @initsteps;
+my $dbmutex=0;
+
+#Mutex routines
+$sem = new IPC::Semaphore(IPC_PRIVATE,1,S_IRWXU|IPC_CREAT|0666) or die("No se puede crear semaforo: $!\n");
+#semaphore initialitation
+our $sem->setval(0,1) or die("Can't initialize semaphore: $!\n");
+sub semwait{$sem->op(0,-1,0) or die("No se puede dejar semaforo: $!\n");}
+sub semsign{$sem->op(0,1,0) or die("No se puede tomar semaforo: $!\n");}
+
+#Create rrd databases
+sub mkrrd{
+	semwait;
+	my $start=30*int(time/30);
+	my $query ="select * from ds";
+	$sth=$dbh->prepare($query) or die("Consulta no valida");
+	$sth->{'mysql_use_result'} = 1;
+	$sth->execute;
+
+	while (my $data=$sth->fetchrow_hashref){
+		my $hb=int($data->{step}*2.5);
+		$rrdfile="$home/rrd/$data->{idds}.rrd";
+		
+		if(-e $rrdfile){
+			#If exist only update parameters
+			my @options=("-h","$data->{idds}:$hb",
+				"-d","1:$data->{dstype}");
+			RRDs::tune $rrdfile,@options;
+
+		}else{
+			#If not existe  the database is created
+			my @options=("-b", $start, "-s", $data->{step},
+				"RRA:AVERAGE:0.5:1:600",
+				"RRA:MAX:0.5:1:600",
+				"RRA:AVERAGE:0.5:6:600",
+				"RRA:MAX:0.5:6:600",
+				"RRA:AVERAGE:0.5:24:600",
+				"RRA:MAX:0.5:24:600",
+				"RRA:AVERAGE:0.5:288:600",
+				"RRA:MAX:0.5:288:600",
+				"DS:1:$data->{dstype}:$hb:U:U");
+			RRDs::create $rrdfile,@options;
+		}
+	}
+	$sth->finish;
+	$dbh->{InactiveDestroy}=1;
+	semsign;
+}
+
+#Initialize the ditcron, sitecheck and rrd systems
+sub initialize{
+	semwait;
+	print "reseting\n";
+	@cmds=();
+	@steps=();
+	@rnds=();
+	@stamps=();
+	@rounds=();
+	@initsteps=();
+	
+	#Get all commands
+	my $query ="select * from cmds";
+	my $sth=$dbh->prepare($query) or die("Consulta no valida");
+	$sth->{'mysql_use_result'} = 0;
+	$sth->execute;
+	
+	#Disperlsal-In-Time cron
+	while (my $data = $sth->fetchrow_hashref){
+		#HACK fix to compatibilize old stuff
+		if($cmd=~/^<pull>/){
+			#Fix to XML::simple
+			my $step=$data->{cmd}=~/<step>(.*)<\/step>/;
+			my $initstep=$data->{cmd}=~/<initstep>(.*)<\/initstep>/;
+			push(@steps,$step);
+			if($initstep>0){
+				#No ditcron, fixed time	
+				#((abs(time-initstep))+(shift/2) % step
+				#DEBUG this
+				my $rnd=((abs(time()-$initstep))+($shift/2)) % $step;
+				push(@rnds,$rnd);
+			}else{
+				#ditcron
+				push(@rnds,int(rand($&)));
+			}
+			push(@cmds,$data->{cmd});
+			push(@rounds,0);
+			push(@initsteps,$initstep);
+		}else{
+			
+			$data->{cmd}=~/\d+$/;
+			push(@steps,$&);
+			push(@rnds,int(rand($&)));
+			push(@cmds,$data->{cmd});
+			push(@rounds,0);
+			push(@initsteps,-1);
+		}
+	}
+	
+	$sth->finish;
+	$dbh->{InactiveDestroy}=1;
+	semsign;
+	mkrrd;
+}
+
+#Print status of ditcron, sitecheck structures
+sub status{
+	open STAT,">$home/collector.status";
+	$t=time;
+	print STAT "time $t\n";
+	print STAT "cmds                 rnds     r     d     stamps  rounds\n";
+	for($i=0;$i<=$#steps;$i++){
+		$r= $t % $steps[$i];
+		$d=getMinimumModularDistance($r,$rnds[$i],$steps[$i]);
+		$scmd=substr($cmds[$i],0,18);
+		printf STAT "%-20s %5s %5s %5s %10s %6s\n",$scmd,$rnds[$i],$r,$d,$stamps[$i],$rounds[$i];
+	}
+	close STAT;
+}
+
+#Update or create entrys on ds table
+sub updateDS{
+	semwait;
+	#TODO msg todavia no implementado
+	my ($head,$body,$dsname,$value,$step,$msg)=@_;
+        my $query ="select * from ds where url='$head$body'";
+        my $sth=$dbh->prepare($query) or die("Consulta no valida");
+        $sth->{'mysql_use_result'}=0;
+        $sth->execute;
+	my $rows=$sth->rows;
+	my $data=$sth->fetchrow_hashref;
+	my $idds=$data->{idds};
+	$sth->finish;
+	$dbh->{InactiveDestroy}=1;
+	
+	if($rows>0){
+		$dbh->do("update ds set value='$value',msg='$msg' where url='$head$body'") or die("update: $!\n");
+	}else{
+		$dbh->do("insert into ds (url,dsname,value,step,msg) values ('$head$body','$dsname','$value','$step','$msg')") or die("insert: $!\n");
+		my $sth=$dbh->prepare($query) or die("Consulta no valida");
+	        $sth->{'mysql_use_result'}=1;
+	        $sth->execute;
+	        my $data=$sth->fetchrow_hashref;
+	        $idds=$data->{idds};
+		$sth->finish;
+		$dbh->{InactiveDestroy}=1;
+	}
+	semsign;
+	return $idds;
+}
+
+#Update the rrd database
+sub updaterrd{
+	my ($idds,$value)=@_;
+	my @options=("N:$value");
+	my $rrdfile="$home/rrd/$idds.rrd";
+
+	#Si existe la base de datos se actualiza
+	if(-e $rrdfile){
+	        RRDs::update $rrdfile,@options;
+		print "\nrrdupdate $rrdfile @options\n" if ($debug);
+		my $error=RRDs::error;
+	        die "ERROR while updating $rrdfile: $error\n" if $error;
+	}else{
+		mkrrd;
+	}
+}
+
+#Process alarms
+sub sendAlarm{
+	my ($value,$sys,$sev,$ttl,$class,$msg)=@_;
+	`$home/emsg -h $host -n sisera -p 2345 -w emusera -s $sev -t $ttl -c $class -m "$msg"`;
+	#TODO Save the alarm into database
+									#
+}
+
+#Process a command
+sub processCMD{
+	my ($cmd)=@_;
+	#XML command
+	if($cmd=~/^<pull>/){
+	                processXMLCMD($cmd);
+	#Old stuff to parse commands
+        }elsif($cmd=~/^rnd:/){
+		#rnd://maxnum:step
+		my ($type,$maxnum,$step)=$cmd=~/(.+):\/\/(\d+):(\d+)$/;
+		my $error='';
+		$value=int(rand($maxnum));
+		my $idds=updateDS("rnd://","$maxnum","aleatorio-$maxnum-$step",$value,$step,$error);
+		updaterrd($idds,$value);
+	}elsif($cmd=~/^snmp:/){
+		#snmp://host@community/name1=oid1(min-max)&name2=oid2(min-max):step
+		my ($type,$host,$comm,$params,$step)=$cmd=~/(.+):\/\/(.+)@(.+)\/(.*):(\d+)$/;
+		my $error='';
+		my @pairs=split(/&/,$params);
+		$session=Net::SNMP->session(Hostname=>$host,Community=>$comm) or $error="snmp: $host $comm $!";
+		foreach my $pair (@pairs){
+			my ($name,$oid,$max,$min,$sev,$ttl,$class,$msg)=$pair=~/(.*)=(.*)\((.*)-(.*)\)\((.*),(.*),(.*),(.*)\)/;
+			#Consulta el mib
+			if($oid=~/^[a-zA-Z][a-zA-Z0-9]*/){
+			        $oid=~s/$&/$mib->{$&}/;
+			}
+			my $result=$session->get_request($oid) or $error="snmp: $oid $!";
+			my $value=$result->{$oid};
+			#Comprueba si hay alarma
+			if($value<$min or $value>$max){
+				sendAlarm($value,$host,$sev,$ttl,$class,$msg);
+			}
+			my $idds=updateDS("$type://","$host/$name",$name,$result->{$oid},$step,$msg);
+			updaterrd($idds,$value);
+			$msg='';
+		}
+		$session->close;
+	}elsif($cmd=~/^script:/){
+		chdir "$home/scripts/";
+		#script://script/param1=data1&param2=data2...:step 
+		#exec -> script param1=data1&param2=data2...
+		#return -> #name1=value1&name2=value2...
+		#alarm return -> #!name1=value1:1:sys:sev:ttl:class:msg&...
+		my ($type,$script,$iparams,$step)=$cmd=~/(.+):\/\/(.+)\/(.*):(\d+)$/;
+		$oparams=`$home/scripts/$script $iparams`;
+		chomp $oparams;
+		my @results=();
+		#El hash del return nos dara a conocer si hay fallo
+		if($oparams=~/^#/){
+			$oparams=~s/^#//g;
+			@results=split(/&/,$oparams);
+		}
+		foreach my $result (@results){
+			my ($name,$value)=split(/=/,$result);
+			#Alarma en el resultado
+			my $msg="";
+			if($name=~/^!.*/){
+				$name=~s/^!//g;
+				($value,$sys,$sev,$ttl,$class,$msg)=split(/:/,$value);
+				`$home/emsg -h $sys -n sisera -p 2345 -w emusera -s $sev -t $ttl -c $class -m "$msg"`;
+				#TODO Meter la alarma en la base de datos
+			}
+			my $idds=updateDS("$type://","$script/$name",$name,$value,$step,$msg);
+			updaterrd($idds,$value);
+		}
+	}elsif($cmd=~/^agent:/){
+		#agent://agent/param1=data1&param2=data2...:step 
+		#exec -> script agent param1=data1&param2=data2...
+		#return -> #name1=value1&name2=value2...
+		#alarm return -> #!name1=value1:1:sys:sev:ttl:class:msg&...
+		my ($type,$script,$iparams,$step)=$cmd=~/(.+):\/\/(.+)\/(.*):(\d+)$/;
+		print "$home/agent $script $iparams\n" if ($debug);
+		$oparams=`$home/agent $script $iparams`;
+		chomp $oparams;
+		my @results=();
+		#El hash del return nos dara a conocer si hay fallo
+		if($oparams=~/^#/){
+			$oparams=~s/^#//g;
+			@results=split(/&/,$oparams);
+		}
+		#print "$oparams\n" if ($debug);
+		#print "@results\n" if ($debug);
+		foreach my $result (@results){
+			print "$result " if ($debug);
+			my ($name,$value)=split(/=/,$result);
+			#Alarma en el resultado
+			my $msg="";
+			if($name=~/^!.*/){
+				$name=~s/^!//g;
+				($value,$sys,$sev,$ttl,$class,$msg)=split(/:/,$value);
+				print "Alarma $value,$sys,$sev,$ttl,$class,$msg\n" if ($debug>2);
+				`$home/emsg -h $sys -n sisera -p 2345 -w emusera -s $sev -t $ttl -c $class -m "$msg"`;
+			}
+			my $idds=updateDS("$type://","$script/$name",$name,$value,$step,$msg);
+			updaterrd($idds,$value);
+		}
+		print "\n" if ($debug);
+	}elsif($cmd=~/^db:/){
+		#db://user:pass@host:port/driver/db/table?name1&name2:step
+		my ($type,$user,$pass,$host,$port,$driver,$db,$table,$params,$step)=$cmd=~/(.+):\/\/(.+)@(.+):\/(\d+)\/(.+)\/(.+)\/(.+)?\/(.+):/;
+		my $dbh2=DBI->connect("DBI:$driver:database=$db;host=$host;port=$port","$user","$pass") or die("No se puede enlazar con la base de datos");
+		$dbh2->disconnect();
+	}elsif($cmd=~/^ssh:/){
+		#ssh://user:dsakey@host/cmd?param1=expr1&param2=expr2:step
+		#dsakey clave dsa
+		#TODO dudosa implemetacion, ya que se puede 
+		#implemenatar en script://
+	}
+}
+
+sub processXMLCMD{
+	my $cmd = XMLin(@_);
+	print Dumper($cmd) if ($debug);
+}
+
+
+sub min{@_[0]<@_[1]?return @_[0]:return @_[1]}
+sub max{@_[0]>@_[1]?return @_[0]:return @_[1]}
+#MinimumModularDistance over a step min(|a-b|,min(a,b)+|max(a,b)-step|))
+sub getMinimumModularDistance{min(abs(@_[0]-@_[1]),min(@_[0],@_[1])+abs(max(@_[0],@_[1])-@_[2]))}
+
+#----------------------------------------
+print "started\n" if ($debug>0);
+initialize;
+
+#Main loop
+my $shift=60; #step minimo
+while(1){
+	$t=time;
+	for($i=0;$i<=$#steps;$i++){
+		$r= $t % $steps[$i];
+		#Shift-In-Time-Execution check
+		if($stamps[$i] < $t and getMinimumModularDistance($r,$rnds[$i],$steps[$i])<=$shift){
+			$stamps[$i]=$t+($shift*2)+1;
+			$rounds[$i]++;
+			if($pid=fork()){
+				#Padre
+			}elsif(defined $pid){
+				#Hijo
+				srand;
+				print "exec $cmds[$i]\n" if ($debug);
+				processCMD($cmds[$i]);
+				exit 0;
+			}
+		}
+	}
+	#If the loop takes more than 750000 msec, maybe collector not throw 
+	#pulls for that second
+	usleep(10000);
+}
+
+#Cleanup
+sub done{
+	wait;
+	$sem->remove;
+	$dbh->disconnect();
+	`rm $home/collector.pid`;
+	print "stopped\n" if ($debug);
+	closelog;
+	exit 0;
+}

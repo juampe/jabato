@@ -1,0 +1,18 @@
+#!/usr/bin/perl
+#Juan Pedro Paredes <juampe@iquis.com>
+
+foreach $chost(split(/,/,$param{chosts})){
+	($host,$rhost)=$chost=~/(.*)-(.*)/;
+	($out)=rcmd($host,"ping $rhost 2");
+	chomp $out;
+	if($out=~/is alive/){
+		if($static{$chost}>0){
+			$static{$chost}=0;
+			$oparam.="!$chost=$static{$chost}:$rhost:4:-1:/net/rping:$rhost is up&";
+		}
+	}else{
+		if($static{"$host$mount"}++<10){$sev=1;}else{$sev=3;}
+		$oparam.="!$chost=$static{$chost}:$rhost:$sev:-1:/net/rping:$chost is down&";
+	}
+}
+$oparam=~s/&$//g;

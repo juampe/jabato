@@ -1,0 +1,173 @@
+#!/usr/bin/perl
+use RRDs;
+use DBI;
+use CGI qw/:standard -debug/;
+use XML::Sablotron;
+
+#Set home
+if(not defined $ENV{JABATO_HOME}){
+        $home="..";
+}else{
+        $home=$ENV{JABATO_HOME};
+}
+
+#Get configuration
+$regfile="$home/jabato.conf";
+do "$regfile" or die "Don't exist $regfile\n";
+                
+$dbh=DBI->connect("DBI:mysql:database=$dbname;host=$dbhost;port=$dbport","$dbuser","$dbpasswd") or die("Cannot link to database");
+
+my $xml;
+
+#Pagina inicial
+if(!param('parent')){
+        $parent=0;
+}else{
+	$parent=param('parent');
+}
+
+#$qstring=$ENV{HTTP_REFERER};
+#$qstring=~s/&/&amp;/;
+
+$xml="<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?><doc>";
+#$xml.="<qstring>$qstring</qstring>\n";
+
+if(!param()){
+	$xml.="<type></type>";
+	$xml.="<icon><id>cmd</id><name>Commands</name></icon>";
+	$xml.="<icon><id>gph</id><name>Graphics</name></icon>";
+#Administrador de graficas
+}elsif(param('type')=~/gph/){
+	$xml.="<type>gph</type>";
+	if(!param('cmd')){
+	        my $query ="select * from nodes where parent='$parent'";
+	        my $sth=$dbh->prepare($query) or die("Consulta no valida");
+	        $sth->{'mysql_use_result'} = 1;
+	        $sth->execute;
+		
+		$xml.="<gphlist><parent>$parent</parent>";
+	        while (my $data = $sth->fetchrow_hashref){
+			$xml.="<gphitem><idnode>$data->{idnode}</idnode>";
+			$xml.="<parent>$parent</parent>";
+			$xml.="<type>$data->{nodetype}</type>";
+			$xml.="<nodename>$data->{nodename}</nodename>";
+			$xml.="</gphitem>";
+		}
+		$xml.="</gphlist>";
+		$sth->finish;
+	#Añadir item
+	}elsif(param('cmd')=~/add/){
+		my $name=param('name');
+		my $itemtype=param('itemtype');
+		$dbh->do("insert into nodes values('','$name','$itemtype','$parent')");
+		$xml.="<refresh><time>1</time><url>admin?type=gph&amp;parent=$parent</url><name>Actualizando items</name></refresh>";
+	#Borrar item
+	}elsif(param('cmd')=~/rmv/){
+		$group=param('group');
+		$idnode=param('idnode');
+#		$dbh->do("delete from targets groups where gname='$group';") or die("delete: $!\n");
+		$dbh->do("delete from nodes where idnode='$idnode';") or die("delete: $!\n");
+		$xml.="<refresh><time>1</time><url>admin?type=gph&amp;parent=$parent</url><name>Actualizando items</name></refresh>";
+	}else{
+		print "g param $ENV{QUERY_STRING}";
+	}
+#Administrador de targets
+}elsif(param('type')=~/tgt/){
+	$xml.="<type>tgt</type>";
+	#Mostrar items
+	if(!param('cmd')){
+		my $query="select * from targets t,nodes n,ds d where t.tname=n.nodename and n.idnode='$parent' and t.idds=d.idds";
+	        my $sth=$dbh->prepare($query) or die("Consulta no valida");
+	        $sth->{'mysql_use_result'} = 1;
+	        $sth->execute;
+		$xml.="<tgtlist><parent>$parent</parent>";
+		my $tname=param('tname');
+		my $dss="";	
+	        while ($data = $sth->fetchrow_hashref){
+			$tname=$data->{tname};
+                	$xml.="<tgtitem><idnode>$data->{idnode}</idnode>";
+                        $xml.="<parent>$parent</parent>";
+                        $xml.="<type>ds</type>";
+                        $xml.="<idds>$data->{idds}</idds>";
+                        $xml.="<tname>$tname</tname>";
+                        $xml.="<dsname>$data->{dsname}</dsname>";
+                        $xml.="</tgtitem>";
+			#para graphic ds=idds:dsname:time:gtype:ptype
+			$dss.="$data->{idds}";
+			$dss.=":$data->{dsname}";
+			$dss.=":$data->{gtype}";
+			$dss.=":$data->{ptype}|";
+		}
+		$dss=~s/\|$//;
+		$xml.="<graphic><tname>$tname</tname><dss>dss=$dss</dss></graphic>";
+		$xml.="<tname>$tname</tname>";
+		$sth->finish;
+		
+		#Recoger ds
+		$xml.="<filter>".param('filter')."</filter>";
+		my $filter="^".param('filter').".*";
+		my $query="select * from ds where dsname regexp '$filter' order by dsname";
+                my $sth=$dbh->prepare($query) or die("Consulta no valida");
+                $sth->{'mysql_use_result'} = 1;
+                $sth->execute;
+		$xml.="<dslist>";
+		while (my $data = $sth->fetchrow_hashref){
+			$xml.="<dsitem><idds>$data->{idds}</idds>";
+			$xml.="<dsname>$data->{dsname}</dsname>";
+			$xml.="</dsitem>";
+		}
+                $sth->finish;
+		$xml.="</dslist></tgtlist>";
+	#Añadir item
+	}elsif(param('cmd')=~/add/){
+                $tname=param('tname');
+                $idds=param('idds');
+                $dbh->do("insert into targets values('$tname','$idds')");
+		$xml.="<refresh><time>1</time><url>admin?type=tgt&amp;parent=$parent</url><name>Actualizando items</name></refresh>";
+	#Borrar item
+	}elsif(param('cmd')=~/rmv/){
+                $idds=param('idds');
+		$dbh->do("delete from targets where idds='$idds'") or die("delete: $!\n");
+		$xml.="<refresh><time>1</time><url>admin?type=tgt&amp;parent=$parent</url><name>Actualizando items</name></refresh>";
+	}else{
+		print "tgt param $ENV{QUERY_STRING}";
+	}
+}elsif(param('type')=~/cmd/){
+	if(!param('cmd')){
+		my $query="select * from cmds";
+                my $sth=$dbh->prepare($query) or die("Consulta no valida");
+                $sth->{'mysql_use_result'} = 1;
+                $sth->execute;
+                $xml.="<cmdlist><parent>$parent</parent>";
+                while ($data = $sth->fetchrow_hashref){
+                        $xml.="<cmditem><idcmd>$data->{idcmd}</idcmd>";
+                        $xml.="<cmd>$data->{cmd}</cmd>";
+                        $xml.="</cmditem>";
+                }
+                $xml.="</cmdlist>";
+                $sth->finish;
+	}
+}else{
+	print "param $ENV{QUERY_STRING}";
+}
+
+$dbh->disconnect();
+
+$xml.="</doc>";
+
+print "$xml\n\n";
+exit 0;
+#Transformamos el documento
+$sab=new XML::Sablotron;
+$sit=new XML::Sablotron::Situation;
+$sab->addArg($sit,'xml',$xml);
+$sab->process($sit,"$home/www/xsl/admin.xsl",'arg:/xml','arg:/output');
+$result=$sab->getResultArg('arg:/output');
+
+$dbh->disconnect();
+
+$q = new CGI;
+print STDOUT $q->header(-type=>'text/html',-expires=>'now');
+
+print $result;
+

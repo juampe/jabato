@@ -1,0 +1,13 @@
+
+jabato is a monitoring system tool that aims:
+Pull in a _efficient_ way several hosts
+Pull whith several diferent methods (agents, scripts, snmp...).
+Use an agent system with status memory.
+Profit at maximun the pulled information.
+Generate alarms according to the pulled parameters status.
+Correlate alarms stablising hierachies.
+Generate exceptions for an determined alarm.
+Generate historic and graphic information of all parameters pulled.
+Generate reports.
+
+

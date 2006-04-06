@@ -1,0 +1,72 @@
+#!/usr/bin/perl
+use RRDs;
+#use IO::SendFile qw(sendfile);
+use CGI qw/:standard -debug/;
+
+#Recoger configuracion
+if(not defined $ENV{JABATO_HOME}){
+        $home="..";
+}else{
+        $home=$ENV{JABATO_HOME};
+}
+
+#Recoger configuracion
+$regfile="$home/jabato.conf";
+do "$regfile" or die "No existe $regfile\n";
+
+#Colores para las graficas, un contador se encarga de rotarlos
+@colors=("00cc00","0000ff","ff0000","00ffff","ff00ff","ffff00","cc0000","0000cc","0080C0","8080C0","FF0080","800080","0000A0","408080","808000","000000","00FF00","0080FF","FF8000","800000","FB31FB");
+
+%timet=(H=>"end-1h",C=>"end-6h",D=>"end-1d",W=>"end-7d",M=>"end-1m",Y=>"end-1y");
+
+
+$target=param('target');
+$time=param('time');
+
+my $img="$home/www/img/$target-$time.png";
+		
+#Cacheo de imegenes durante 30s
+my $graph=1;
+		
+my @options=("$img","--alt-autoscale","--title","$target",
+	"--imgformat","PNG",
+	"-w","600",
+	"-h","150");
+
+#Si el tiempo de cache no ha expirado se genera la grafica
+my $cont=0;
+$graph=2;
+foreach $ds (split(/\|/,param('dss'))){
+	#ds=idds:dsname:gtype:ptype
+	if(($idds,$dsname,$gtype,$ptype)=$ds=~/(\d+):([\w\/]+):(\w+):(\w+)/){
+		$rrdfile="$home/rrd/$idds.rrd";
+		#Obtener el valor de la url
+		push(@options,"DEF:ds$cont=$rrdfile:1:$gtype");
+		push(@options,"$ptype:ds$cont#@colors[$cont]:$dsname");
+		$cont++;
+		$graph=1 if $graph==2;
+		$graph=0 if(not -e $rrdfile);
+	}
+}
+
+push(@options,("--start",$timet{$time}));
+
+#Si no existen todas las base de datos no se genera la grafica
+#se pone una grafica informando del error
+if($graph==1){
+        my ($averages,$xsize,$ysize)=RRDs::graph(@options);
+        $e=RRDs::error;
+        die "ERROR while graphing $target: $e\n" if $e;
+}else{
+	$img="$home/www/img/nograph.png";
+}
+
+
+$q = new CGI;
+print STDOUT $q->header(-type=>'image/png',-expires=>'now');
+
+open IMG, "<$img" or die("No se puede abrir $file: $!");
+binmode(STDOUT);
+print STDOUT <IMG>; 
+close IMG;
+

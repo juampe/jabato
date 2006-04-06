@@ -1,0 +1,20 @@
+#!/usr/bin/perl
+#Juan Pedro Paredes <juampe@retemail.es>
+
+my $max=94;
+foreach $host(split(/,/,$param{hosts})){
+	@vms=rcmd($host,"vmstat 1 2") or next;
+	$stat=$vms[3];
+	chomp $stat;
+	$stat=~s/\t| +/ /g;
+	$stat=~s/^ | $//g;
+	($procsr,$procsb,$procsw,$memswap,$memfree,$pagere,$pagemf,$pagepi,$pagepo,$pagefr,$pagede,$disk1,$disk2,$disk3,$disk4,$disk5,$faultin,$faultsy,$faultcs,$cpuus,$cpusy,$cpuid)=split(/[ \t]/,$stat);
+	$oparam.="$host/procsr=$procsr&$host/procsb=$procsb&$host/procsw=$procsw&$host/memswap=$memswap&$host/memfree=$memfree&$host/pagefree=$pagefree&$host/pagere=$pagere&$host/pagemf=$pagemf&$host/pagepi=$pagepi&$host/pagepo=$pagepo&$host/pagefr=$pagefr&$host/pagede=$pagede&$host/disk1=$disk1&$host/disk2=$disk2&$host/disk3=$disk3&$host/disk4=$disk4&$host/disk5=$disk5&$host/faultin=$faultin&$host/faultsy=$faultsy&$host/faultcs=$faultcs&$host/cpuus=$cpuus&$host/cpusy=$cpusy&$host/cpuid=$cpuid&";
+	$cputo=$cpuus+$cpusy;
+	if($cputo>$max){
+		$oparam.="!$host/cputo=$pct:$host:$sev:-1:/system/cpu: system cpu at $cputo%&";
+	}else{
+		$oparam.="$host/cputo=$cputo&";
+	}
+}
+$oparam=~s/&$//g;

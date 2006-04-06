@@ -1,0 +1,109 @@
+#!/usr/bin/perl
+#Juan Pedro Paredes <juampe@retemail.es>
+use DBI;
+use Socket;
+use Net::Ping;
+use Data::Dumper;
+
+#Recoger configuracion
+if(not defined $ENV{JABATO_HOME}){
+        $home=".";
+}else{
+	$home=$ENV{JABATO_HOME};
+}
+
+#Change Dir
+chdir "$home";
+#Recoger configuracion
+$regfile="$home/jabato.conf";
+do "$regfile" or do "./jabato.conf" or die "No existe $regfile\n";
+
+
+#Renice
+setpriority(0,$$,20);
+
+#abrir la base de datos
+$dbh=DBI->connect("DBI:mysql:database=$dbname;host=$dbhost;port=$dbport","$dbuser","$dbpasswd") or die("No se puede enlazar con la base de datos");
+
+#Variables globales
+%comm=();
+
+#Funciones
+sub ping{
+	my ($host)=@_;
+	if(!$comm{$host}){
+		my $p=new Net::Ping("icmp",3);
+                if($p->ping($host)){
+			$res=1;
+		}else{
+			$res=0;
+		}
+		$comm{$host}=$res
+        }else{
+                $res=1;
+        }
+        return $res;
+}
+
+#Para el ssh se necesita un id_dsa valido en la maquina remota
+#se debe poner id_dsa.pub en el authorized_keys.
+
+sub rcmd{
+	my($host,$cmd)=@_;
+	if(ping($host)){
+		#return `rsh $host "$cmd" 2>/dev/null`;
+		return `ssh -i ssh/id_dsa -F ssh/ssh_config $host "$cmd" 2>/dev/null`
+	}else{
+		return 0;	
+	}
+	rsleep(2,6);
+}
+
+#Dispersion en el tiempo de ejecuciones atomicas
+sub rsleep{
+        my($min,$max)=@_;
+        sleep $min+int(rand($max-$min+1));
+}
+
+#Gestion de parametros de entrada
+#La entrada puede realizarse con parametros o por fichero de configuracion
+
+($path)=$0=~/^(.+)\/.+$/;
+$agent="$path/agents/$ARGV[0]";
+$cfg="$agent.cfg";
+$stc="$agent.stc";
+if( -e $cfg ){
+	$istring=`cat $cfg`;
+	chomp $istring;
+}else{
+	$istring=$ARGV[1];
+}
+
+my @iparams=split(/&/,$istring);
+$oparam="";
+%param=();
+foreach my $iparam (@iparams){
+	my ($name,$value)=split(/=/,$iparam);
+	$param{$name}=$value;
+}
+
+# Recogida static
+%static=();
+if( -e $stc ){
+	do $stc;
+}
+%static=%$static1;
+
+# Ejecucion
+do "$agent";
+
+# Almacen static
+open STC,">$stc";
+local $Data::Dump::Purity=1;
+local $Data::Dumper::Varname="static";
+$dump=Dumper({%static});
+print STC $dump;
+close STC;
+
+# Salida
+print "#$oparam";

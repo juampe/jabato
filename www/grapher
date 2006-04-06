@@ -1,0 +1,141 @@
+#!/usr/bin/perl
+use RRDs;
+use Apache::DBI;
+use DBI;
+use CGI qw/:standard -debug/;
+use XML::Sablotron;
+
+#Recoger configuracion
+if(not defined $ENV{JABATO_HOME}){
+        $home="..";
+}else{
+        $home=$ENV{JABATO_HOME};
+}
+                
+#Recoger configuracion
+$regfile="$home/jabato.conf";
+do "$regfile" or die "No existe $regfile\n";
+
+#coger las configuraciones de la base de datos
+#por cada target y generar  la base de datos rrd si el fichero rrd no existe
+
+$dbh=DBI->connect("DBI:mysql:database=$dbname;host=$dbhost;port=$dbport","$dbuser","$dbpasswd") or die("No se puede enlazar con la base de datos");
+
+#Colores para las graficas, un contador se encarga de rotarlos
+@colors=("00cc00","0000ff","ff0000","00ffff","ff00ff","ffff00","cc0000","0000cc","0080C0","8080C0","FF0080","800080","0000A0","408080","808000","000000","00FF00","0080FF","FF8000","800000","FB31FB");
+#tipos H C D W M Y
+%timet=(H=>"end-1h",C=>"end-6h",D=>"end-1d",W=>"end-7d",M=>"end-1m",Y=>"end-1y");
+%timen=(H=>"Gráfica Horaria",C=>"Gráfica Cuarto de dia",D=>"Gráfica Diaria",W=>"Gráfica Semanal",M=>"Gráfica Mensual",Y=>"Gráfica Anual");
+
+my $type;
+my $xml;
+
+#Generea una grafica a partir de un target
+sub grafica{
+	my ($target,$time)=@_;
+        #my $img="$home/img/$target-$time.png";
+        my $img="img/$target-$time.png";
+			
+	#Cacheo de imegenes durante 30s
+        open IMG,$img;$mtime=(stat IMG)[9];close IMG;
+	my $graph=1;
+        if((time-$mtime)<30){$graph=0}
+			
+	my $query ="select * from targets t,ds d where t.idds=d.idds and tname='$target'";
+	my $sth=$dbh->prepare($query) or die("Consulta no valida");
+	$sth->{'mysql_use_result'} = 1;
+	$sth->execute;
+
+	my @options=("$img","--alt-autoscale","--title","$target",
+		"-w","600",
+		"-h","150");
+
+	my $cont=0;
+	my $ret="<img>$img</img>";
+	while (my $data=$sth->fetchrow_hashref) {
+		$ret.="<ds><name>$data->{dsname}</name><dsc>$data->{dsc}</dsc><value>$data->{value}</value><msg>$data->{msg}</msg></ds>";
+		if($graph==1){
+			$rrdfile="$home/rrd/$data->{idds}.rrd";
+			#Obtener el valor de la url
+			push(@options,"DEF:ds$cont=$rrdfile:1:$data->{gtype}");
+			push(@options,"$data->{ptype}:ds$cont#@colors[$cont]:$data->{dsname}");
+			$cont++;
+			if(! -e $rrdfile){
+				$graph=0;	
+			}
+		}
+	}
+
+	push(@options,("--start",$timet{$time}));
+
+	#Si no existen todas las base de datos no se genera la grafica
+	if($graph==1){
+		`echo @options >$home/www/opts`;
+	        my ($averages,$xsize,$ysize)=RRDs::graph(@options);
+	        $ERR=RRDs::error;
+	        die "ERROR while graphing $target: $ERR\n" if $ERR;
+	}
+	$sth->finish;
+	return $ret;
+}
+
+if(!param('parent')){
+        $parent=0;
+}else{
+	$parent=param('parent');
+}
+	
+#Procesa los datos de CGI y genera la pagina adecuada
+$xml="<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?><doc>\n";
+#los grupos
+my $query ="select idnode,nodename from nodes where parent='$parent' and nodetype='group'";
+my $sth=$dbh->prepare($query) or die("Consulta no valida:\n$DBI::errstr\n");
+$sth->{'mysql_use_result'} = 1;
+$sth->execute or die("Ejecucion no valida:\n$DBI::errstr\n");
+while (my $data = $sth->fetchrow_hashref) {
+	$xml.="<group><idnode>$data->{idnode}</idnode>";
+	$xml.="<name>$data->{nodename}</name></group>\n";
+}
+$sth->finish;
+
+if(not defined param('target')){
+	#los targets (graficas) tipo C
+	my $query ="select idnode,nodename from nodes where parent='$parent' and nodetype='target'";
+	my $sth=$dbh->prepare($query) or die("Consulta no valida");
+	$sth->{'mysql_use_result'} = 1;
+	$sth->execute;
+        my $table = $sth->fetchall_arrayref();
+        $sth->finish;
+	for $i (0 .. $#{$table} ){
+		$idnode=$table->[$i][0];
+		$target=$table->[$i][1];
+		$xml.="<graph><idnode>$idnode</idnode><type>C</type>";
+		$xml.="<time>$timen{C}</time>";
+		$xml.="<target>$target</target>";
+		$xml.=grafica($target,"C")."</graph>\n";
+        }
+}else{
+	#los targets (graficas) tipo H S D W M 
+	#Generar una pagina web con toda la info del target
+	#con Graficas H S D W M Y
+	$target=param('target');
+	#TODO coger de los rrd's las medias max y min de datos
+	for $opt("H","C","D","W","M","Y"){
+		$xml.="<graph><idnode>$parent</idnode><target>$target</target>";
+		$xml.="<type>$opt</type><time>$timen{$opt}</time>";
+		$xml.=grafica($target,$opt)."</graph>\n";
+	}
+}
+
+$xml.="</doc>";
+
+#print "$xml\n\n";
+#transformamos el documento
+$sab=new XML::Sablotron;
+$sit=new XML::Sablotron::Situation;
+$sab->addArg($sit,'xml',$xml);
+$sab->process($sit,"$home/www/xsl/grapher.xsl",'arg:/xml','arg:/output');
+$result=$sab->getResultArg('arg:/output');
+
+$dbh->disconnect();
+print $result;
