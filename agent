@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-#Juan Pedro Paredes <juampe@retemail.es>
+#Juan Pedro Paredes <juampe@iquis.com>
 use DBI;
 use Socket;
 use Net::Ping;
@@ -29,6 +29,7 @@ $dbh=DBI->connect("DBI:mysql:database=$dbname;host=$dbhost;port=$dbport","$dbuse
 %comm=();
 
 #Funciones
+#TODO Cacheo de conectividad
 sub ping{
 	my ($host)=@_;
 	if(!$comm{$host}){
@@ -66,7 +67,8 @@ sub rsleep{
 }
 
 #Gestion de parametros de entrada
-#La entrada puede realizarse con parametros o por fichero de configuracion
+#La entrada puede realizarse con parametros o por fichero de configuracion o por base de datos
+#TODO entrada de parametros por base de datos
 
 ($path)=$0=~/^(.+)\/.+$/;
 $agent="$path/agents/$ARGV[0]";

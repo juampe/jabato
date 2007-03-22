@@ -212,20 +212,20 @@
         <xsl:for-each select="cmditem">
 		<option value="{idcmd}"><xsl:value-of select="cmdname"/></option>
 		<td align="center">
-		<font face="verdana" size="2">
-		<a href="admin?type=tgt&amp;tname={nodename}&amp;parent={idnode}">
-                </font></td>
-		<td align="center">
-		<img src="img/target.png" border="0" alt="Grafica" title="Grafica"/>
+		  <font face="verdana" size="2">
+		    <a href="admin?type=tgt&amp;tname={nodename}&amp;parent={idnode}">
+		      <img src="img/target.png" border="0" alt="Grafica" title="Grafica"/>
+		    </a>
+                  </font>
 		</td>
 		<td align="center">
-		<a href="admin?type=tgt&amp;tname={nodename}&amp;parent={idnode}">
-		<img src="img/edit.png" border="0" alt="Editar" title="Editar"/></a>
-		<a href="admin?type=gph&amp;cmd=rmv&amp;parent={parent}&amp;idnode={idnode}">
-                <img src="img/del.png" border="0" alt="Borrar" title="Borrar"/>
-	        </a></td>
-	</xsl:if>
-
+		  <a href="admin?type=tgt&amp;tname={nodename}&amp;parent={idnode}">
+		    <img src="img/edit.png" border="0" alt="Editar" title="Editar"/>
+		  </a>
+		  <a href="admin?type=gph&amp;cmd=rmv&amp;parent={parent}&amp;idnode={idnode}">
+                    <img src="img/del.png" border="0" alt="Borrar" title="Borrar"/>
+	          </a>
+		</td>
 	</xsl:for-each>
 </xsl:template>
 

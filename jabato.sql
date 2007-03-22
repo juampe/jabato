@@ -67,6 +67,39 @@ CREATE TABLE `targets` (
   PRIMARY KEY  (`tname`,`idds`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 
+DROP TABLE IF EXISTS `actions`;
+CREATE TABLE `actions` (
+  `idaction` int(11) NOT NULL auto_increment,
+  `action` char(80) NOT NULL default '',
+  PRIMARY KEY  (`idaction`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+
+DROP TABLE IF EXISTS `hosts`;
+CREATE TABLE `hosts` (
+  `idhost` int(11) NOT NULL auto_increment,
+  `hosts` char(80) NOT NULL default '',
+  PRIMARY KEY  (`idhost`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+
+DROP TABLE IF EXISTS `execs`;
+CREATE TABLE `execs` (
+  `idhost` int(11) NOT NULL,
+  `idaction` int(11) NOT NULL,
+  `enabled` boolean  not null,
+  `hosts` char(80) NOT NULL default '',
+  PRIMARY KEY  (`idhost`,`idaction`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+
+DROP TABLE IF EXISTS `execsparms`;
+CREATE TABLE `execsparms` (
+  `idhost` int(11) NOT NULL,
+  `idaction` int(11) NOT NULL,
+  `parmname` char(80) NOT NULL default '',
+  `parmvalue` char(80) NOT NULL default '',
+  PRIMARY KEY  (`idhost`,`idaction`,`parmname`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+
+
 /*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
 /*!40014 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS */;
 /*!40014 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS */;

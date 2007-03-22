@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-#Juan Pedro Paredes <juampe@retemail.es>
+#Juan Pedro Paredes <juampe@iquis.com>
 
 my $max=94;
 foreach $host(split(/,/,$param{hosts})){
