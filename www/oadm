@@ -1,0 +1,153 @@
+#!/usr/bin/perl
+use RRDs;
+use DBI;
+use CGI qw/:standard -debug/;
+use XML::Sablotron;
+
+#Recoger configuracion
+if(not defined $ENV{JABATO_HOME}){
+        $home="..";
+}else{
+        $home=$ENV{JABATO_HOME};
+}
+
+#Recoger configuracion
+$regfile="$home/jabato.conf";
+do "$regfile" or die "No existe $regfile\n";
+                
+#coger las configuraciones de la base de datos
+#por cada target y generar  la base de datos rrd si el fichero rrd no existe
+
+$dbh=DBI->connect("DBI:mysql:database=$db;host=$dbhost;port=$dbport","$dbuser","$dbpasswd") or die("No se puede enlazar con la base de datos");
+
+#Pagina inicial
+if(!param()){
+	print <<"EOF";
+$head
+<doc>
+<a href=\"/jabato/admin?type=c\"><img src=\"img/cmd.png\" border=\"0\" alt=\"Comandos\" title=\"Comandos\"/></a><br>
+Comandos<br>
+<br>
+<a href=\"admin?type=g\"><img src=\"img/gph.png\" border=\"0\" alt=\"Graficas\" title=\"Graficas\"/></a><br>
+Gáficas<br>
+<br>
+$foot
+EOF
+
+#Administrador de groups
+}elsif(param('type')=~/g/){
+	if(!param('cmd')){
+	        my $query ="select distinct(nodename) from nodes";
+	        my $sth=$dbh->prepare($query) or die("Consulta no valida");
+	        $sth->{'mysql_use_result'} = 1;
+	        $sth->execute;
+		print <<"EOF";
+$head
+<a href=\"\"><img src=\"img/new.png\" border=\"0\" alt=\"Añadir\" title=\"Añadir\"/></a><br>
+<form action=admin enctype=multipart/form-data method=post>
+<input type=hidden name=type value="g" class=peq>
+<input type=hidden name=cmd value="add" class=peq>
+<input type="text" size="10" name="group" class="peq"/><br>
+<input type="submit" value="Nuevo grupo" class="peq"/>
+</form>
+<br>
+<table border=\"0\" align=\"center\" bgcolor=\"#CCCCCC\" cellspacing=\"1\">
+<tr>
+<td align=\"center\"><font face=\"verdana\" size=\"1\">Accion</font></td>
+<td align=\"center\"><font face=\"verdana\" size=\"1\">Grupo</font></td>
+</tr>
+EOF
+	        while (my $data = $sth->fetchrow_hashref){
+			print <<"EOF";
+<tr bgcolor="#FFFFFF">
+<td align="center"><font face="verdana" size="2">$data->{nodename}</font></td>
+<td align="center">
+<a href=\"admin?type=t&group=$data->{nodename}\"><img src=\"img/chg.png\" border=\"0\" alt=\"Cambiar\" title=\"Cambiar\"/></a>
+<a href=\"admin?type=g&cmd=rmv&group=$data->{nodename}\"><img src=\"img/rmv.png\" border=\"0\" alt=\"Borrar\" title=\"Borrar\"/></a>
+</td>
+</tr>
+EOF
+		}
+		print <<"EOF";
+</table>$foot
+EOF
+		$sth->finish;
+#Añadir group vacio
+	}elsif(param('cmd')=~/add/){
+		$group=param('group');
+		$dbh->do("insert into groups values('$group','vacio')");
+		print <<"EOF";
+<html><head><title></title>
+<meta http-equiv=refresh content=\"1;url=admin?type=g\">
+</head><body><center><h1>Actualizando grupos</h1></center></body></html>
+EOF
+
+#Borrar Grupo
+	}elsif(param('cmd')=~/rmv/){
+		$group=param('group');
+#		$dbh->do("delete from targets groups where gname='$group';") or die("delete: $!\n");
+		$dbh->do("delete from groups where gname='$group';") or die("delete: $!\n");
+                print <<"EOF";
+<html><head><title></title>
+<meta http-equiv=refresh content=\"1;url=admin?type=g\">
+</head><body><center><h1>Actualizando grupos</h1></center></body></html>
+EOF
+	}else{
+		print "g param $ENV{QUERY_STRING}";
+	}
+#Administrador de targets
+}elsif(param('type')=~/t/){
+	$group=param('group');
+	if(!param('cmd')){
+	        my $query ="select t.tname from targets t,groups g where t.tname=g.tname and g.gname='$group' group by t.tname";
+	        my $sth=$dbh->prepare($query) or die("Consulta no valida");
+	        $sth->{'mysql_use_result'} = 1;
+	        $sth->execute;
+		print <<"EOF";
+$head
+<a href=\"\"><img src=\"img/new.png\" border=\"0\" alt=\"Añadir\" title=\"Añadir\"/></a><br>
+<form action=admin enctype=multipart/form-data method=post>
+<input type=hidden name=type value="t" class=peq>
+<input type=hidden name=cmd value="add" class=peq>
+<input type="text" size="10" name="target" class="peq"/><br>
+<input type="submit" value="Nuevo target" class="peq"/>
+</form>
+<br>
+<table border=\"0\" align=\"center\" bgcolor=\"#CCCCCC\" cellspacing=\"1\">
+<tr>
+<td align=\"center\"><font face=\"verdana\" size=\"1\">Accion</font></td>
+<td align=\"center\"><font face=\"verdana\" size=\"1\">Grupo</font></td>
+</tr>
+EOF
+	        while (my $data = $sth->fetchrow_hashref){
+			print <<"EOF";
+<tr bgcolor="#FFFFFF">
+<td align="center"><font face="verdana" size="2">$data->{tname}</font></td>
+<td align="center">
+<a href=\"admin?type=t&group=$data->{tname}\"><img src=\"img/chg.png\" border=\"0\" alt=\"Cambiar\" title=\"Cambiar\"/></a>
+<a href=\"admin?type=g&cmd=rmv&group=$data->{tname}\"><img src=\"img/rmv.png\" border=\"0\" alt=\"Borrar\" title=\"Borrar\"/></a>
+</td>
+</tr>
+EOF
+		}
+		print <<"EOF";
+</table>$foot
+EOF
+		$sth->finish;
+
+	}elsif(param('cmd')=~/add/){
+                $group=param('group');
+                $dbh->do("insert into targets values('$group','vacio')");
+                print <<"EOF";
+<html><head><title></title>
+<meta http-equiv=refresh content=\"1;url=admin?type=g\">
+</head><body><center><h1>Actualizando targets</h1></center></body></html>
+EOF
+	}elsif(param('cmd')=~/rmv/){
+	}else{
+		print "t param $ENV{QUERY_STRING}";
+	}
+}else{
+	print "param $ENV{QUERY_STRING}";
+}
+$dbh->disconnect();

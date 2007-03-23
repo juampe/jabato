@@ -1,0 +1,6 @@
+#!/usr/bin/perl
+$md5pwd='$1$dsbdssjd$VthkB0VaTV6EzGS6Jo0Xt.';
+
+my ($salt)=$md5pwd=~/\$1\$(.*)\$/;
+
+print $salt;
