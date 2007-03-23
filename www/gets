@@ -1,3 +1,0 @@
-GET /jabato/graphic?target=bema&amp;time=H&amp;dss=279:bea1/cpusy:AVERAGE:LINE1|281:bea1/cputo:AVERAGE:LINE1 HTTP/1.0
-GET /jabato/graphic?target=mrtg&time=H&dss=12:bea2/var/run:AVERAGE:LINE1 HTTP/1.0
-GET /jabato/img/target.png HTTP/1.0

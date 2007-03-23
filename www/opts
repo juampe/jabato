@@ -1,1 +1,0 @@
-img/bema1 filesystem-C.png --alt-autoscale --title bema1 filesystem -w 600 -h 150 DEF:ds0=../rrd/749.rrd:1:AVERAGE LINE1:ds0#00cc00:bema1/ DEF:ds1=../rrd/755.rrd:1:AVERAGE LINE1:ds1#0000ff:bema1/opt DEF:ds2=../rrd/758.rrd:1:AVERAGE LINE1:ds2#ff0000:bema1/opt/oracle/arch --start end-6h
